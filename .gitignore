@@ -1,8 +1,20 @@
-# Nestjs specific
+# Nest / Node
 /dist
 /node_modules
 /build
 /tmp
+**/dist
+**/node_modules
+**/coverage
+
+# Stray TypeScript emit inside source trees (build output belongs in dist/)
+libs/**/src/**/*.js
+libs/**/src/**/*.d.ts
+libs/**/src/**/*.js.map
+apps/**/src/**/*.js
+apps/**/src/**/*.d.ts
+apps/**/src/**/*.js.map
+**/tsconfig.tsbuildinfo
 
 # Logs
 logs
@@ -13,12 +25,26 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# dotenv environment variable files
+# Env (keep .env.example tracked)
 .env
 .env.development
 .env.test
 .env.production
+.env.local
 
-# temp directory
+# Temp
 .temp
 .tmp
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Challenge brief (local only — not part of deliverable)
+/INTERVIEW_PROBLEM.md
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

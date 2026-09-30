@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "libs/domain" },
+    { "path": "libs/contracts" },
+    { "path": "libs/application" },
+    { "path": "libs/infrastructure" },
+    { "path": "apps/api" }
+  ]
+}

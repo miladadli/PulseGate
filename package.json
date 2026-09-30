@@ -1,0 +1,49 @@
+{
+  "name": "pulsegate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Distributed SMS Gateway — NestJS monorepo",
+  "workspaces": [
+    "apps/*",
+    "libs/*"
+  ],
+  "scripts": {
+    "clean:src-emit": "node scripts/clean-src-emit.js",
+    "build:libs": "npm run clean:src-emit && npm run build -w @pulsegate/domain -w @pulsegate/contracts -w @pulsegate/application -w @pulsegate/infrastructure",
+    "build:apps": "npm run build -w @pulsegate/api -w @pulsegate/operator-sim -w @pulsegate/worker -w @pulsegate/projector -w @pulsegate/ledger -w @pulsegate/reconciler",
+    "build": "npm run build:libs && npm run build:apps",
+    "test": "jest --config jest.config.cjs --testPathPattern=\\.spec\\.ts$",
+    "test:integration": "jest --config jest.config.cjs --testPathPattern=tests/integration --runInBand",
+    "test:all": "npm run test && npm run test:integration",
+    "test:k6": "node scripts/run-k6.js",
+    "api:dev": "npm run build:libs && npm run start:dev -w @pulsegate/api",
+    "api:start": "npm run start -w @pulsegate/api",
+    "operator:dev": "npm run start:dev -w @pulsegate/operator-sim",
+    "worker:express": "npm run start:express -w @pulsegate/worker",
+    "worker:normal": "npm run start:normal -w @pulsegate/worker",
+    "worker:heavy": "npm run start:heavy -w @pulsegate/worker",
+    "projector:dev": "npm run start:dev -w @pulsegate/projector",
+    "ledger:dev": "npm run start:dev -w @pulsegate/ledger",
+    "reconciler:dev": "npm run start:dev -w @pulsegate/reconciler",
+    "db:migrate": "npm run migration:run -w @pulsegate/infrastructure",
+    "db:seed": "npm run seed -w @pulsegate/infrastructure",
+    "db:setup": "npm run db:migrate && npm run db:seed",
+    "redis:rebuild": "npm run rebuild:redis -w @pulsegate/infrastructure",
+    "infra:up": "docker compose -f docker/docker-compose.yml --profile infra up -d",
+    "infra:down": "docker compose -f docker/docker-compose.yml --profile infra down",
+    "infra:logs": "docker compose -f docker/docker-compose.yml --profile infra logs -f",
+    "infra:reset": "docker compose -f docker/docker-compose.yml --profile infra down -v && npm run infra:up && npm run db:setup",
+    "full:up": "docker compose -f docker/docker-compose.yml --profile full up --build -d",
+    "full:down": "docker compose -f docker/docker-compose.yml --profile full down"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.20.4",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.14",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

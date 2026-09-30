@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/coverage
+**/.git
+**/*.md
+docs
+INTERVIEW_PROBLEM.md
+.env
+.env.*
+!**/.env.example
+**/tsconfig.tsbuildinfo
+**/*.log
+.cursor
+agent-transcripts
+scripts/k6
