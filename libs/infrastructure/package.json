@@ -1,0 +1,31 @@
+{
+  "name": "@pulsegate/infrastructure",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typeorm": "typeorm-ts-node-commonjs",
+    "migration:run": "typeorm-ts-node-commonjs migration:run -d src/persistence/typeorm/data-source.ts",
+    "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/persistence/typeorm/data-source.ts",
+    "seed": "ts-node src/persistence/typeorm/seed.ts",
+    "rebuild:redis": "ts-node src/persistence/typeorm/rebuild-redis.ts"
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.8.1",
+    "@pulsegate/contracts": "0.1.0",
+    "@pulsegate/domain": "0.1.0",
+    "ioredis": "^5.4.2",
+    "kafkajs": "^2.2.4",
+    "pg": "^8.13.1",
+    "prom-client": "^15.1.3",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
