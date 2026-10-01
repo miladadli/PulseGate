@@ -9,5 +9,12 @@ export * from './redis/redis-rate-limiter';
 export * from './redis/redis-circuit-breaker';
 export * from './redis/lua-scripts';
 export * from './leasing/default-lease-grant.service';
+export * from './kafka/kafka-sms.producer';
+export * from './kafka/sms-dispatch.worker';
+export * from './kafka/ledger-settle.worker';
+export * from './clickhouse/clickhouse-sms-report.store';
+export * from './clickhouse/sms-reports.projector';
+export * from './reconciler/reservation.reconciler';
+export * from './metrics/pulse-metrics';
 
 export const INFRASTRUCTURE_VERSION = '0.1.0';
