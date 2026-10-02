@@ -1,0 +1,25 @@
+{
+  "name": "@pulsegate/worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "start:dev": "ts-node src/main.ts",
+    "start:express": "cross-env WORKER_MODE=express ts-node src/main.ts",
+    "start:normal": "cross-env WORKER_MODE=normal ts-node src/main.ts",
+    "start:heavy": "cross-env WORKER_MODE=heavy ts-node src/main.ts"
+  },
+  "dependencies": {
+    "@pulsegate/infrastructure": "0.1.0",
+    "@pulsegate/contracts": "0.1.0",
+    "ioredis": "^5.4.2",
+    "kafkajs": "^2.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "cross-env": "^7.0.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
