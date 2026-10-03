@@ -331,7 +331,8 @@ Local Kafka is a **single broker / RF=1** (Compose). Production would use a mult
 
 - Auth and UI are out of scope per the challenge brief.
 - Bulk SMS API omitted on purpose — same admit use-case can be fan-out later.
-- Design targets ~100M/day; load proof in this repo is local k6, not production-scale soak.
+- Design targets ~100M/day; load proof in this repo is local k6 admit (~175 req/s on a laptop) plus e2e smoke, not a production-scale soak.
+- Dispatch capacity is separate from admit: scale Kafka consumer replicas (`worker-express` / `worker-normal`) to match operator RTT; backlog shows up as high `latency_ms`, not as API failures.
 - Exact Kafka residual rebuild is deferred in favor of the conservative path.
 - Metrics are Prometheus scrape at `/v1/metrics` (lightweight; OTLP optional).
 

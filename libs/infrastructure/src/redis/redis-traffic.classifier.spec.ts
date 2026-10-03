@@ -18,9 +18,12 @@ describe('RedisTrafficClassifier', () => {
   beforeEach(async () => {
     await redis.connect().catch(() => undefined);
     classifier = new RedisTrafficClassifier(redis, 5, 2);
-    const keys = await redis.keys(`ratewin:${userId}:*`);
-    if (keys.length) await redis.del(...keys);
-    await redis.del(`heavy:${userId}`);
+    // Avoid KEYS (O(n) over whole Redis after k6). Clear current 10s bucket.
+    const bucket = Math.floor(Date.now() / 1000 / 10);
+    await redis.del(
+      `ratewin:${userId}:${bucket}`,
+      `heavy:${userId}`,
+    );
   });
 
   afterAll(async () => {

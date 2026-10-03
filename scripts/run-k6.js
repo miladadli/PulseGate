@@ -42,10 +42,26 @@ if (!k6) {
   process.exit(1);
 }
 
+// Defaults: npm run test:k6
+// Overrides via env (reliable on Windows npm): VUS=5 DURATION=10s REQUIRE_CREDIT=1 npm run test:k6
+// Or pass k6 args after -- : npm run test:k6 -- run -e VUS=5 scripts/k6/sms-load.js
 const args = process.argv.slice(2);
 const script = args.length
   ? args
-  : ['run', path.join('scripts', 'k6', 'sms-load.js')];
+  : [
+      'run',
+      ...(process.env.VUS ? ['-e', `VUS=${process.env.VUS}`] : []),
+      ...(process.env.DURATION
+        ? ['-e', `DURATION=${process.env.DURATION}`]
+        : []),
+      ...(process.env.PRIORITY
+        ? ['-e', `PRIORITY=${process.env.PRIORITY}`]
+        : []),
+      ...(process.env.REQUIRE_CREDIT
+        ? ['-e', `REQUIRE_CREDIT=${process.env.REQUIRE_CREDIT}`]
+        : []),
+      path.join('scripts', 'k6', 'sms-load.js'),
+    ];
 
 const r = spawnSync(k6, script, { stdio: 'inherit', shell: false });
 process.exit(r.status ?? 1);

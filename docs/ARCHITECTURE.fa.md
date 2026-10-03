@@ -192,7 +192,8 @@ Kafka لوکال تک‌broker / RF=1 است؛ production باید multi-broker 
 
 - Auth/UI خارج از محدودهٔ صورت تمرین.
 - Bulk API عمداً نیست.
-- اثبات بار: k6 محلی.
+- اثبات بار: k6 محلی برای admit (~۱۷۵ req/s روی لپ‌تاپ) + smoke انتها‌به‌انتها؛ نه soak تولید.
+- ظرفیت dispatch جدا از admit است؛ replicaهای worker را با RTT اپراتور هم‌تراز کنید (در `full:up` پیش‌فرض express×۳).
 - متریک: `GET /v1/metrics`.
 
 [README.md](../README.md) · [RUNBOOK.md](../RUNBOOK.md)

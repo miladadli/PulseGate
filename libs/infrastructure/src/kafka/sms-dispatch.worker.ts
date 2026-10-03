@@ -73,34 +73,14 @@ export class SmsDispatchWorker {
     });
 
     const t = TOPIC[this.config.mode];
-    const admin = kafka.admin();
-    await admin.connect();
-    const desired = [
-      { topic: t.main, numPartitions: this.config.mode === 'express' ? 6 : 12 },
-      { topic: t.retry, numPartitions: this.config.mode === 'express' ? 6 : 12 },
-      { topic: 'sms.status', numPartitions: 12 },
-      { topic: 'sms.dlq', numPartitions: 3 },
-      { topic: 'sms.express', numPartitions: 6 },
-      { topic: 'sms.normal', numPartitions: 12 },
-      { topic: 'sms.heavy', numPartitions: 12 },
-      { topic: 'sms.retry.express', numPartitions: 6 },
-      { topic: 'sms.retry.normal', numPartitions: 12 },
-      { topic: 'sms.retry.heavy', numPartitions: 12 },
-    ];
-    const byName = new Map(desired.map((x) => [x.topic, x]));
-    const unique = [...byName.values()];
-    const existing = new Set(await admin.listTopics());
-    const missing = unique.filter((x) => !existing.has(x.topic));
-    if (missing.length > 0) {
-      await admin.createTopics({ waitForLeaders: true, topics: missing });
-    }
-    await admin.disconnect();
+    await this.ensureTopics(kafka, t);
 
     this.producer = kafka.producer({ allowAutoTopicCreation: true });
     await this.producer.connect();
 
     this.consumer = kafka.consumer({ groupId: t.group });
     await this.consumer.connect();
+    // Earliest if no committed offset — avoids dropping admits produced during cold start.
     await this.consumer.subscribe({ topic: t.main, fromBeginning: true });
     await this.consumer.subscribe({ topic: t.retry, fromBeginning: true });
 
@@ -126,17 +106,62 @@ export class SmsDispatchWorker {
     });
   }
 
-  private async handle({ topic, message }: EachMessagePayload): Promise<void> {
+  private async ensureTopics(
+    kafka: Kafka,
+    t: { main: string; retry: string },
+  ): Promise<void> {
+    const desired = [
+      { topic: t.main, numPartitions: this.config.mode === 'express' ? 6 : 12 },
+      { topic: t.retry, numPartitions: this.config.mode === 'express' ? 6 : 12 },
+      { topic: 'sms.status', numPartitions: 12 },
+      { topic: 'sms.dlq', numPartitions: 3 },
+      { topic: 'sms.express', numPartitions: 6 },
+      { topic: 'sms.normal', numPartitions: 12 },
+      { topic: 'sms.heavy', numPartitions: 12 },
+      { topic: 'sms.retry.express', numPartitions: 6 },
+      { topic: 'sms.retry.normal', numPartitions: 12 },
+      { topic: 'sms.retry.heavy', numPartitions: 12 },
+    ];
+    const unique = [...new Map(desired.map((x) => [x.topic, x])).values()];
+
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 20; attempt++) {
+      const admin = kafka.admin();
+      try {
+        await admin.connect();
+        const existing = new Set(await admin.listTopics());
+        const missing = unique.filter((x) => !existing.has(x.topic));
+        if (missing.length > 0) {
+          await admin.createTopics({ waitForLeaders: true, topics: missing });
+        }
+        await admin.disconnect();
+        return;
+      } catch (err) {
+        lastErr = err;
+        try {
+          await admin.disconnect();
+        } catch {
+          /* ignore */
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error('failed to ensure kafka topics');
+  }
+
+  private async handle({ message }: EachMessagePayload): Promise<void> {
     if (!message.value) return;
     const event = JSON.parse(message.value.toString()) as SmsAcceptedEvent;
     const attempt = Number(message.headers?.attempt?.toString() ?? '1');
 
-    // Idempotent processing marker
     const doneKey = `dispatch:done:${event.messageId}`;
-    const already = await this.redis.set(doneKey, '1', 'EX', 86400, 'NX');
-    if (already !== 'OK') {
-      return;
-    }
+    const marker = await this.redis.get(doneKey);
+    if (marker === '1') return;
+    // Short lock so a crash mid-send can be retried after TTL (not forever-skipped).
+    const locked = await this.redis.set(doneKey, 'processing', 'PX', 120_000, 'NX');
+    if (locked !== 'OK') return;
 
     if (this.config.mode === 'heavy') {
       await this.throttleTenant(event.userId);
@@ -176,6 +201,7 @@ export class SmsDispatchWorker {
       }
 
       await this.circuit.recordSuccess();
+      await this.redis.set(doneKey, '1', 'EX', 86400);
       await this.markSeen(event.messageId);
       await this.emitStatus({
         messageId: event.messageId,

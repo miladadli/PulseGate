@@ -16,6 +16,8 @@
     "test:integration": "jest --config jest.config.cjs --testPathPattern=tests/integration --runInBand",
     "test:all": "npm run test && npm run test:integration",
     "test:k6": "node scripts/run-k6.js",
+    "demo:smoke": "node scripts/demo-smoke.js",
+    "verify": "npm test && npm run test:integration && npm run demo:smoke",
     "api:dev": "npm run build:libs && npm run start:dev -w @pulsegate/api",
     "api:start": "npm run start -w @pulsegate/api",
     "operator:dev": "npm run start:dev -w @pulsegate/operator-sim",
@@ -33,7 +35,7 @@
     "infra:down": "docker compose -f docker/docker-compose.yml --profile infra down",
     "infra:logs": "docker compose -f docker/docker-compose.yml --profile infra logs -f",
     "infra:reset": "docker compose -f docker/docker-compose.yml --profile infra down -v && npm run infra:up && npm run db:setup",
-    "full:up": "docker compose -f docker/docker-compose.yml --profile full up --build -d",
+    "full:up": "docker compose -f docker/docker-compose.yml --profile full up --build -d --scale worker-express=3 --scale worker-normal=2",
     "full:down": "docker compose -f docker/docker-compose.yml --profile full down"
   },
   "devDependencies": {

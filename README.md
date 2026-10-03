@@ -53,15 +53,34 @@ Reset DB volumes + re-migrate:
 npm run infra:reset
 ```
 
-### 2) Full stack (clone-and-run)
+### 2) Full stack (clone-and-run) — preferred for interview demo
 
 ```bash
+cp .env.example .env   # once
+npm install            # once
 npm run full:up
 ```
 
-Brings up infra + migrate/seed + API, operator-sim, workers, projector, ledger, reconciler.
+Brings up infra + migrate/seed + API, operator-sim, workers (express×3, normal×2), projector, ledger, reconciler.
 
 API: http://localhost:3000/v1 · Swagger: http://localhost:3000/docs · Metrics: http://localhost:3000/v1/metrics
+
+**Smoke (accept → deliver):**
+
+```bash
+# 1) top-up
+curl -X POST http://localhost:3000/v1/wallets/11111111-1111-1111-1111-111111111111/topups \
+  -H "content-type: application/json" -d "{\"amount\":5000}"
+
+# 2) send
+curl -s -X POST http://localhost:3000/v1/sms \
+  -H "content-type: application/json" \
+  -H "Idempotency-Key: demo-1" \
+  -d "{\"userId\":\"11111111-1111-1111-1111-111111111111\",\"to\":\"+989121111111\",\"body\":\"hello\",\"priority\":\"express\"}"
+
+# 3) poll until status=delivered (usually <2s)
+curl -s http://localhost:3000/v1/sms/<messageId>
+```
 
 Stop: `npm run full:down`
 
@@ -107,13 +126,15 @@ npm run worker:heavy
 
 Swagger: [http://localhost:3000/docs](http://localhost:3000/docs)
 
-## Tests
+## Tests / verify before demo
 
 ```bash
 npm test                 # unit (domain / application / infra)
 npm run test:integration # live API (needs infra + api; ideally full stack)
-npm run test:all
-npm run test:k6          # load test (requires k6 installed + API up)
+npm run demo:smoke       # top-up → send express → wait delivered
+npm run verify           # unit + integration + demo:smoke
+npm run test:k6          # admit load (needs k6 + API up; top-up first)
+# Windows-friendly overrides: set VUS=5& set DURATION=10s& set REQUIRE_CREDIT=1& npm run test:k6
 ```
 
 Ops: see [RUNBOOK.md](./RUNBOOK.md) (rate limit, circuit breaker, SLO measurement).
@@ -131,3 +152,15 @@ Ops: see [RUNBOOK.md](./RUNBOOK.md) (rate limit, circuit breaker, SLO measuremen
 - Architecture (English + diagrams): [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 - معماری (فارسی، راست‌چین): [docs/ARCHITECTURE.fa.md](./docs/ARCHITECTURE.fa.md)
 - Ops / SLO: [RUNBOOK.md](./RUNBOOK.md)
+
+## What this delivery proves (and what it does not)
+
+| Proven locally | Not claimed |
+|----------------|-------------|
+| Admit path without Postgres on hot path (Redis Lua + Kafka) | Production 100M SMS/day soak |
+| Credit lease / settle / reconciler TTL lockup | Multi-broker HA Kafka |
+| Express vs normal/heavy split + CB + 429 | Real operator capacity |
+| End-to-end deliver via workers + reports in ClickHouse | Multi-region / DR drill |
+| Unit tests + optional k6 admit load (~170 req/s local) | P99 under production traffic |
+
+Design target remains ~100M/day; scale-out is horizontal (API replicas, more worker consumers, Kafka partitions). Load proof in this repo is local Docker + k6, not a production soak.

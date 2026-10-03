@@ -18,8 +18,13 @@ describe('RedisCreditStore admit/commit/refund', () => {
 
   beforeEach(async () => {
     await redis.set(walletKey, '10');
-    const idemKeys = await redis.keys(`idem:${userId}:*`);
-    if (idemKeys.length) await redis.del(...idemKeys);
+    // Exact keys only — KEYS scans the whole DB and times out after load tests.
+    await redis.del(
+      `idem:${userId}:k1`,
+      `idem:${userId}:k2`,
+      `idem:${userId}:k3`,
+      `idem:${userId}:k4`,
+    );
   });
 
   afterAll(async () => {

@@ -23,25 +23,45 @@ export class SmsReportsProjector {
       logLevel: logLevel.ERROR,
     });
 
-    const admin = kafka.admin();
-    await admin.connect();
-    const existing = new Set(await admin.listTopics());
     const needed = [
       'sms.express',
       'sms.normal',
       'sms.heavy',
       'sms.status',
     ];
-    const missing = needed
-      .filter((t) => !existing.has(t))
-      .map((topic) => ({
-        topic,
-        numPartitions: topic === 'sms.express' ? 6 : 12,
-      }));
-    if (missing.length) {
-      await admin.createTopics({ waitForLeaders: true, topics: missing });
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= 20; attempt++) {
+      const admin = kafka.admin();
+      try {
+        await admin.connect();
+        const existing = new Set(await admin.listTopics());
+        const missing = needed
+          .filter((t) => !existing.has(t))
+          .map((topic) => ({
+            topic,
+            numPartitions: topic === 'sms.express' ? 6 : 12,
+          }));
+        if (missing.length) {
+          await admin.createTopics({ waitForLeaders: true, topics: missing });
+        }
+        await admin.disconnect();
+        lastErr = undefined;
+        break;
+      } catch (err) {
+        lastErr = err;
+        try {
+          await admin.disconnect();
+        } catch {
+          /* ignore */
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
-    await admin.disconnect();
+    if (lastErr) {
+      throw lastErr instanceof Error
+        ? lastErr
+        : new Error('failed to ensure kafka topics');
+    }
 
     this.consumer = kafka.consumer({
       groupId: this.config.groupId ?? 'projector',
