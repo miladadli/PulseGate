@@ -32,6 +32,7 @@ describe('wallet use-cases', () => {
       settleAcceptedBatch: jest.fn(),
       applyPostSettleRefund: jest.fn(),
       isMessageSettled: jest.fn(),
+      listAllWallets: jest.fn().mockResolvedValue([]),
     };
   }
 
@@ -44,6 +45,9 @@ describe('wallet use-cases', () => {
       commit: jest.fn(),
       refund: jest.fn(),
       getMessageCache: jest.fn(),
+      setResidual: jest.fn(),
+      isAdmitPaused: jest.fn().mockResolvedValue(false),
+      setAdmitPaused: jest.fn(),
     };
     const leases: jest.Mocked<LeaseGrantService> = {
       grant: jest.fn(),
@@ -68,6 +72,9 @@ describe('wallet use-cases', () => {
       commit: jest.fn(),
       refund: jest.fn(),
       getMessageCache: jest.fn(),
+      setResidual: jest.fn(),
+      isAdmitPaused: jest.fn().mockResolvedValue(false),
+      setAdmitPaused: jest.fn(),
     };
     const uc = new GetWalletUseCase(wallets, credits);
     const dto = await uc.execute(userId);

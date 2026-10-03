@@ -10,6 +10,16 @@ import {
   REFUND_SMS_LUA,
 } from './lua-scripts';
 
+type MessageCache = {
+  status: string;
+  userId: string;
+  messageId: string;
+  acceptedAt: string;
+  to: string;
+  body: string;
+  priority: string;
+};
+
 export class RedisCreditStore implements CreditStore {
   constructor(private readonly redis: Redis) {}
 
@@ -69,7 +79,8 @@ export class RedisCreditStore implements CreditStore {
 
     if (raw[0] === 'err') {
       if (raw[1] === 'insufficient') return { status: 'insufficient' };
-      return { status: 'payload_mismatch' };
+      if (raw[1] === 'payload_mismatch') return { status: 'payload_mismatch' };
+      throw new Error(`admitSms lua error: ${raw[1] ?? 'unknown'}`);
     }
 
     return {
@@ -86,6 +97,10 @@ export class RedisCreditStore implements CreditStore {
     idempotencyKey: string;
     reservationId: string;
     messageId: string;
+    to?: string;
+    body?: string;
+    priority?: string;
+    acceptedAt?: string;
   }): Promise<void> {
     await this.redis.eval(
       COMMIT_SMS_LUA,
@@ -101,13 +116,17 @@ export class RedisCreditStore implements CreditStore {
       'EX',
       3600,
     );
+    const prev = await this.getMessageCache(input.messageId);
     await this.redis.set(
       `msg:${input.messageId}`,
       JSON.stringify({
         status: 'accepted',
         userId: input.userId,
         messageId: input.messageId,
-        acceptedAt: new Date().toISOString(),
+        acceptedAt: input.acceptedAt ?? prev?.acceptedAt ?? new Date().toISOString(),
+        to: input.to ?? prev?.to ?? '',
+        body: input.body ?? prev?.body ?? '',
+        priority: input.priority ?? prev?.priority ?? '',
       }),
       'EX',
       3600,
@@ -133,19 +152,23 @@ export class RedisCreditStore implements CreditStore {
     return result === 1 ? 'refunded' : 'noop';
   }
 
-  async getMessageCache(messageId: string): Promise<{
-    status: string;
-    userId: string;
-    messageId: string;
-    acceptedAt: string;
-  } | null> {
+  async getMessageCache(messageId: string): Promise<MessageCache | null> {
     const raw = await this.redis.get(`msg:${messageId}`);
     if (!raw) return null;
-    return JSON.parse(raw) as {
+    const parsed = JSON.parse(raw) as Partial<MessageCache> & {
       status: string;
       userId: string;
       messageId: string;
       acceptedAt: string;
+    };
+    return {
+      status: parsed.status,
+      userId: parsed.userId,
+      messageId: parsed.messageId,
+      acceptedAt: parsed.acceptedAt,
+      to: parsed.to ?? '',
+      body: parsed.body ?? '',
+      priority: parsed.priority ?? '',
     };
   }
 

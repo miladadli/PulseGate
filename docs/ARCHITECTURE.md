@@ -7,6 +7,8 @@
 
 Persian (RTL): [ARCHITECTURE.fa.md](./ARCHITECTURE.fa.md)
 
+> **Presentation tip:** Walk diagrams in order **2 → 4 → 5 → 6 → 7**. Keep 3 for “why monorepo?” questions.
+
 ---
 
 ## 1. Executive summary
@@ -54,8 +56,9 @@ flowchart TB
   Kafka --> Led["ledger"]
   Led -->|settleAcceptedBatch| PG
   Led -.->|settled markers| Redis
-  Rec["reconciler ~3s"] --> Redis
-  Rec --> PG
+
+  Rec["reconciler ~3s"] <-->|"ZSET deadlines / TTL lockup"| Redis
+  Rec <-->|"pending leases + settle checks"| PG
 ```
 
 ---
@@ -108,7 +111,7 @@ Wiring for the API: `apps/api/src/app.module.ts`.
 
 ---
 
-## 4. Admit pipeline (latest code order)
+## 4. Admit pipeline (matches `SendSmsUseCase`)
 
 Orchestrator: `libs/application/src/send-sms.use-case.ts`.
 
@@ -118,19 +121,20 @@ flowchart TD
   B -->|yes| B1["503 ADMIT_PAUSED"]
   B -->|no| C{"Redis rate limit<br/>express 200/s · normal 50/s"}
   C -->|deny| C1["429 RATE_LIMITED"]
-  C -->|allow| D["refillIfNeeded<br/>PG lease → Redis residual"]
-  D --> E["Lua admitSms<br/>idem + reserve + ZSET"]
-  E -->|insufficient| F["refill once more → retry admit"]
-  F -->|still insufficient| F1["402"]
+  C -->|allow| D["refillIfNeeded<br/>PG → Redis if residual low"]
+  D --> E["Lua admitSms"]
   E -->|payload mismatch| E1["409"]
   E -->|ok| G["TrafficClassifier → topic"]
+  E -->|insufficient| F["refillIfNeeded again"]
+  F --> E2["Lua admitSms retry"]
+  E2 -->|ok| G
+  E2 -->|still insufficient| F1["402"]
+  E2 -->|payload mismatch| E1
   G --> H["Kafka produce acks=all"]
   H -->|ack| I["Lua commit DONE"]
   I --> J["202 accepted"]
-  H -->|definitive fail| K["Lua refund"]
-  K --> K1["503"]
-  H -->|ambiguous timeout| L["no refund · keep PENDING"]
-  L --> L1["503 same messageId"]
+  H -->|definitive fail| K["Lua refund → 503"]
+  H -->|ambiguous timeout| L["no refund · keep PENDING → 503"]
 ```
 
 **Deterministic identity**
@@ -141,7 +145,7 @@ payloadHash = hash(to ∥ body ∥ priority)
 ```
 
 **First Redis lease:** usually on **top-up** (`TopUpWalletUseCase` → `refillIfNeeded`).  
-On SMS, refill runs again only if residual ≤ ~30% of lease size (default 1000).
+On SMS, refill runs when residual ≤ ~30% of lease size (default 1000), and **once more** if the first admit returns insufficient.
 
 ---
 
@@ -153,6 +157,7 @@ sequenceDiagram
   participant A as API
   participant RL as RateLimiter
   participant L as LeaseGrant
+  participant PG as Postgres
   participant R as Redis Lua
   participant K as Kafka
   participant W as Worker
@@ -163,17 +168,27 @@ sequenceDiagram
   C->>A: POST /v1/sms + Idempotency-Key
   A->>RL: tryAdmit
   alt limited
-    RL-->>A: deny → 429
+    RL-->>A: 429
   else allowed
     A->>L: refillIfNeeded
-    L->>L: PG openLeaseGrant if residual low
-    L->>R: grantLeaseCredit
-    A->>R: admitSms PENDING + DECR
+    alt residual low
+      L->>PG: openLeaseGrant
+      PG-->>L: granted
+      L->>R: grantLeaseCredit
+    end
+    A->>R: admitSms
     alt insufficient
-      R-->>A: 402
-    else ok
-      A->>K: produce topic express/normal/heavy
-      alt definitive ack
+      A->>L: refillIfNeeded again
+      L->>PG: openLeaseGrant if still available
+      L->>R: grantLeaseCredit
+      A->>R: admitSms retry
+      alt still insufficient
+        A-->>C: 402
+      end
+    end
+    alt admit ok
+      A->>K: produce express/normal/heavy
+      alt acked
         A->>R: commit DONE
         A-->>C: 202
         K->>W: consume
@@ -182,12 +197,13 @@ sequenceDiagram
         Note over W: latency_ms = ackAt - acceptedAt
         W->>K: sms.status delivered
         K->>CH: projector upsert
-        K->>Led: batch settle → PG
+        K->>Led: batch settle
+        Led->>PG: debit + offsets
       else definitive produce failure
         A->>R: refund
         A-->>C: 503
       else ambiguous
-        Note over A,R: no refund
+        Note over A,R: no refund keep PENDING
         A-->>C: 503 same messageId
       end
     end
@@ -290,7 +306,11 @@ How to measure: [RUNBOOK.md](../RUNBOOK.md).
 | `reconciler` | timer sweep | ~**3s** (`RECONCILER_INTERVAL_MS`) |
 | `operator-sim` | HTTP server | request-driven |
 
+**Reservation TTL policy:** expired `PENDING` reservations are **committed (lockup)**, never auto-refunded. Refunding after TTL would risk free SMS if an ambiguous produce already landed on Kafka. Definitive produce failures still refund immediately on the API path.
+
 Operator **circuit breaker** (shared Redis) opens after consecutive failures → retry/DLQ with `circuit_open` (`redis-circuit-breaker.ts`).
+
+Local Kafka is a **single broker / RF=1** (Compose). Production would use a multi-broker cluster with RF≥3.
 
 ---
 

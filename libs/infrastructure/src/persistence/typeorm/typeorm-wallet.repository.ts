@@ -44,19 +44,26 @@ export class TypeOrmWalletRepository implements WalletRepository {
     });
   }
 
+  private async persistSnapshot(
+    wallet: Wallet,
+    em?: EntityManager,
+  ): Promise<void> {
+    const snap = wallet.toSnapshot();
+    await this.wallets(em).save({
+      userId: snap.userId,
+      balance: snap.balance.toString(),
+      leasedOut: snap.leasedOut.toString(),
+      version: String(snap.version),
+    });
+  }
+
   async findByUserId(userId: UserId): Promise<Wallet | null> {
     const row = await this.wallets().findOne({ where: { userId } });
     return row ? this.toDomain(row) : null;
   }
 
   async save(wallet: Wallet): Promise<void> {
-    const snap = wallet.toSnapshot();
-    await this.wallets().save({
-      userId: snap.userId,
-      balance: snap.balance.toString(),
-      leasedOut: snap.leasedOut.toString(),
-      version: String(snap.version),
-    });
+    await this.persistSnapshot(wallet);
   }
 
   async appendLedger(entry: LedgerAppend): Promise<void> {
@@ -127,14 +134,7 @@ export class TypeOrmWalletRepository implements WalletRepository {
 
       const wallet = this.toDomain(row);
       wallet.applyTopUp(amount);
-      const snap = wallet.toSnapshot();
-
-      await this.wallets(em).save({
-        userId: snap.userId,
-        balance: snap.balance.toString(),
-        leasedOut: snap.leasedOut.toString(),
-        version: String(snap.version),
-      });
+      await this.persistSnapshot(wallet, em);
 
       await this.ledger(em).save(
         this.ledger(em).create({
@@ -176,14 +176,7 @@ export class TypeOrmWalletRepository implements WalletRepository {
       }
 
       const granted = wallet.grantLease(requested);
-      const snap = wallet.toSnapshot();
-
-      await this.wallets(em).save({
-        userId: snap.userId,
-        balance: snap.balance.toString(),
-        leasedOut: snap.leasedOut.toString(),
-        version: String(snap.version),
-      });
+      await this.persistSnapshot(wallet, em);
 
       await this.leases(em).save(
         this.leases(em).create({
@@ -237,7 +230,6 @@ export class TypeOrmWalletRepository implements WalletRepository {
           continue;
         }
 
-        // Pre-settle terminal refund: skip debit (worker already credited Redis).
         const refunded = await this.ledger(em).findOne({
           where: { entryType: 'refund', refId: debit.messageId },
         });
@@ -275,13 +267,7 @@ export class TypeOrmWalletRepository implements WalletRepository {
         }
         const wallet = this.toDomain(row);
         wallet.settleConsumption(Money.of(total));
-        const snap = wallet.toSnapshot();
-        await this.wallets(em).save({
-          userId: snap.userId,
-          balance: snap.balance.toString(),
-          leasedOut: snap.leasedOut.toString(),
-          version: String(snap.version),
-        });
+        await this.persistSnapshot(wallet, em);
         await this.ledger(em).save(
           this.ledger(em).create({
             userId,
@@ -322,7 +308,6 @@ export class TypeOrmWalletRepository implements WalletRepository {
         where: { entryType: 'lease_settle', refId: messageId },
       });
       if (!settled) {
-        // Pre-settle: record refund marker so settle skips this messageId.
         await this.ledger(em).save(
           this.ledger(em).create({
             userId,
@@ -345,13 +330,7 @@ export class TypeOrmWalletRepository implements WalletRepository {
       }
       const wallet = this.toDomain(row);
       wallet.applyPostSettleRefund(Money.of(cost));
-      const snap = wallet.toSnapshot();
-      await this.wallets(em).save({
-        userId: snap.userId,
-        balance: snap.balance.toString(),
-        leasedOut: snap.leasedOut.toString(),
-        version: String(snap.version),
-      });
+      await this.persistSnapshot(wallet, em);
       await this.ledger(em).save(
         this.ledger(em).create({
           userId,

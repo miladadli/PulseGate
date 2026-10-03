@@ -1,37 +1,25 @@
 import { CreditStore, SmsReportStore } from '@pulsegate/domain';
 import { GetSmsByIdUseCase, GetSmsReportsUseCase } from './reports.use-cases';
 
+function mockCredits(
+  overrides: Partial<jest.Mocked<CreditStore>> = {},
+): jest.Mocked<CreditStore> {
+  return {
+    getResidual: jest.fn(),
+    grantLeaseCredit: jest.fn(),
+    admitSms: jest.fn(),
+    commit: jest.fn(),
+    refund: jest.fn(),
+    getMessageCache: jest.fn().mockResolvedValue(null),
+    setResidual: jest.fn(),
+    isAdmitPaused: jest.fn().mockResolvedValue(false),
+    setAdmitPaused: jest.fn(),
+    ...overrides,
+  };
+}
+
 describe('reports use-cases', () => {
-  it('GetSmsById prefers redis accept-cache (early GET)', async () => {
-    const reports: jest.Mocked<SmsReportStore> = {
-      upsertAccepted: jest.fn(),
-      upsertStatus: jest.fn(),
-      findById: jest.fn(),
-      query: jest.fn(),
-    };
-    const credits: jest.Mocked<CreditStore> = {
-      getResidual: jest.fn(),
-      grantLeaseCredit: jest.fn(),
-      admitSms: jest.fn(),
-      commit: jest.fn(),
-      refund: jest.fn(),
-      getMessageCache: jest.fn().mockResolvedValue({
-        status: 'accepted',
-        userId: 'u1',
-        messageId: 'm1',
-        acceptedAt: '2026-01-01T00:00:00.000Z',
-      }),
-    };
-
-    const uc = new GetSmsByIdUseCase(reports, credits);
-    const row = await uc.execute('m1');
-
-    expect(row?.status).toBe('accepted');
-    expect(row?.messageId).toBe('m1');
-    expect(reports.findById).not.toHaveBeenCalled();
-  });
-
-  it('GetSmsById falls back to ClickHouse store', async () => {
+  it('GetSmsById prefers ClickHouse when present', async () => {
     const reports: jest.Mocked<SmsReportStore> = {
       upsertAccepted: jest.fn(),
       upsertStatus: jest.fn(),
@@ -39,7 +27,7 @@ describe('reports use-cases', () => {
         messageId: 'm2',
         userId: 'u1',
         to: '+1',
-        body: 'x',
+        body: 'hello',
         priority: 'express',
         status: 'delivered',
         acceptedAt: 'a',
@@ -49,19 +37,59 @@ describe('reports use-cases', () => {
       }),
       query: jest.fn(),
     };
-    const credits: jest.Mocked<CreditStore> = {
-      getResidual: jest.fn(),
-      grantLeaseCredit: jest.fn(),
-      admitSms: jest.fn(),
-      commit: jest.fn(),
-      refund: jest.fn(),
-      getMessageCache: jest.fn().mockResolvedValue(null),
-    };
+    const credits = mockCredits({
+      getMessageCache: jest.fn().mockResolvedValue({
+        status: 'accepted',
+        userId: 'u1',
+        messageId: 'm2',
+        acceptedAt: 'a',
+        to: '+old',
+        body: 'stale',
+        priority: 'normal',
+      }),
+    });
 
     const uc = new GetSmsByIdUseCase(reports, credits);
     const row = await uc.execute('m2');
     expect(row?.status).toBe('delivered');
-    expect(reports.findById).toHaveBeenCalledWith('m2');
+    expect(row?.body).toBe('hello');
+    expect(credits.getMessageCache).not.toHaveBeenCalled();
+  });
+
+  it('GetSmsById falls back to Redis cache with payload fields', async () => {
+    const reports: jest.Mocked<SmsReportStore> = {
+      upsertAccepted: jest.fn(),
+      upsertStatus: jest.fn(),
+      findById: jest.fn().mockResolvedValue(null),
+      query: jest.fn(),
+    };
+    const credits = mockCredits({
+      getMessageCache: jest.fn().mockResolvedValue({
+        status: 'accepted',
+        userId: 'u1',
+        messageId: 'm1',
+        acceptedAt: '2026-01-01T00:00:00.000Z',
+        to: '+989121111111',
+        body: 'otp',
+        priority: 'express',
+      }),
+    });
+
+    const uc = new GetSmsByIdUseCase(reports, credits);
+    const row = await uc.execute('m1');
+
+    expect(row).toEqual({
+      messageId: 'm1',
+      userId: 'u1',
+      to: '+989121111111',
+      body: 'otp',
+      priority: 'express',
+      status: 'accepted',
+      acceptedAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      deliveredAt: null,
+      latencyMs: null,
+    });
   });
 
   it('GetSmsReports delegates to store.query', async () => {

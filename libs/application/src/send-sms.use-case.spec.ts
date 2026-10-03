@@ -18,6 +18,9 @@ function mocks() {
     commit: jest.fn(),
     refund: jest.fn(),
     getMessageCache: jest.fn(),
+    setResidual: jest.fn(),
+    isAdmitPaused: jest.fn().mockResolvedValue(false),
+    setAdmitPaused: jest.fn(),
   };
   const leases: jest.Mocked<LeaseGrantService> = {
     grant: jest.fn(),

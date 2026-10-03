@@ -7,7 +7,9 @@
 **هدف ظرفیت:** حدود ۱۰۰ میلیون پیامک در روز · ترافیک چندمستأجری ناعادلانه · Express با P99 &lt; ۵۰۰ms تا ack اپراتور  
 **ناوردای سخت:** پس از اتمام اعتبار قابل‌خرج، هیچ پیامکی پذیرفته نمی‌شود.
 
-نسخهٔ انگلیسی (خواناتر برای GitHub + نمودارها): [ARCHITECTURE.md](./ARCHITECTURE.md)
+نسخهٔ انگلیسی (خواناتر روی GitHub برای ارائه): [ARCHITECTURE.md](./ARCHITECTURE.md)
+
+> **ترتیب پیشنهاد برای ارائه:** نمودار ۲ → ۴ → ۵ → ۶ → ۷
 
 ---
 
@@ -55,16 +57,16 @@ flowchart TB
   Proj --> CH[(ClickHouse)]
   Kafka --> Led["ledger"]
   Led -->|settleAcceptedBatch| PG
-  Rec["reconciler ~3s"] --> Redis
-  Rec --> PG
+
+  Rec["reconciler ~3s"] <-->|"ZSET / TTL lockup"| Redis
+  Rec <-->|"pending leases"| PG
 ```
 
 ---
 
 ## ۳. بسته‌بندی Monorepo
 
-**apps = نحوهٔ اجرا · libs = معنای دامنه.**  
-API و workerها دامنهٔ مشترک دارند ولی فرایند جدا برای مقیاس مستقل.
+**apps = نحوهٔ اجرا · libs = معنای دامنه.**
 
 ```mermaid
 flowchart LR
@@ -102,9 +104,7 @@ flowchart LR
 
 ---
 
-## ۴. خط لولهٔ Admit (ترتیب فعلی کد)
-
-ارکستراتور: `libs/application/src/send-sms.use-case.ts`
+## ۴. خط لولهٔ Admit (هم‌تراز با کد)
 
 ```mermaid
 flowchart TD
@@ -114,23 +114,29 @@ flowchart TD
   C -->|رد| C1["429"]
   C -->|اجازه| D["refillIfNeeded"]
   D --> E["Lua admit"]
-  E -->|ناکافی| F1["402"]
-  E -->|ok| G["classify topic"]
+  E -->|mismatch| E1["409"]
+  E -->|ok| G["classify"]
+  E -->|ناکافی| F["refill دوباره"]
+  F --> E2["admit retry"]
+  E2 -->|ok| G
+  E2 -->|باز هم ناکافی| F1["402"]
   G --> H["Kafka produce"]
   H -->|ack| I["commit → 202"]
   H -->|قطعی fail| K["refund → 503"]
   H -->|مبهم| L["بدون refund → 503"]
 ```
 
-**اولین lease به Redis:** معمولاً روی **top-up**؛ روی SMS فقط اگر residual هنوز خالی/زیر آستانه باشد.
+**اولین lease:** معمولاً روی top-up. روی SMS اگر residual کم باشد refill می‌شود؛ اگر admit اول insufficient باشد **یک‌بار دیگر** refill + retry.
 
 ---
 
 ## ۵. مسیر ارسال (Sequence)
 
-همان جزئیات کامل در نسخهٔ انگلیسی — شامل rate limit، lease، Lua، Kafka، worker، ledger، ClickHouse و تعریف `latency_ms`.
+نمودار کامل با Postgres در مسیر lease و retry admit:
 
-نمودار کامل: بخش ۵ در [ARCHITECTURE.md](./ARCHITECTURE.md).
+→ بخش ۵ در [ARCHITECTURE.md](./ARCHITECTURE.md)
+
+نکته: `LeaseGrant` با **Postgres** `openLeaseGrant` می‌زند، بعد `grantLeaseCredit` به Redis — نه self-call.
 
 ---
 
@@ -145,17 +151,16 @@ flowchart LR
   Ledger -->|debit| PG
 ```
 
-- سقف اجاره: `balance − leased_out` → اگر ledger عقب باشد **overspend نمی‌شود** (قفل می‌شود).
+- سقف اجاره: `balance − leased_out` → اگر ledger عقب باشد **overspend نمی‌شود**.
 - بازسازی محافظه‌کارانه: `npm run redis:rebuild`.
 
 ---
 
 ## ۷. تاپیک‌های Kafka
 
-`sms.express` / `sms.normal` / `sms.heavy` (+ retry / status / dlq).  
-Ledger و projector با **consumer group** جدا روی همان تاپیک‌های dispatch — بدون `sms.accepted` جدا.
+نمودار کامل consumer groupها: بخش ۷ در [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-نمودار کامل: بخش ۷ در [ARCHITECTURE.md](./ARCHITECTURE.md).
+خلاصه: `sms.express|normal|heavy` + retry/status/dlq — ledger و projector روی همان تاپیک‌های dispatch با CG جدا.
 
 ---
 
@@ -175,19 +180,21 @@ Ledger و projector با **consumer group** جدا روی همان تاپیک‌
 
 | فرایند | مدل بیدار شدن |
 |--------|----------------|
-| worker / projector | مصرف‌کنندهٔ Kafka (رویدادمحور) |
+| worker / projector | Kafka (رویدادمحور) |
 | ledger | Kafka + flush حدود ۲ ثانیه |
-| reconciler | تایمر حدود ۳ ثانیه |
+| reconciler | تایمر حدود ۳ ثانیه؛ TTL روی PENDING فقط **commit/lockup** |
+
+Kafka لوکال تک‌broker / RF=1 است؛ production باید multi-broker با RF≥3 باشد.
 
 ---
 
 ## ۱۰. محدودیت‌ها و اجرا
 
 - Auth/UI خارج از محدودهٔ صورت تمرین.
-- Bulk API عمداً نیست؛ همان admit قابل fan-out است.
-- اثبات بار: k6 محلی — نه soak تولیدی.
+- Bulk API عمداً نیست.
+- اثبات بار: k6 محلی.
 - متریک: `GET /v1/metrics`.
 
-جزئیات اجرا: [README.md](../README.md) · عملیات: [RUNBOOK.md](../RUNBOOK.md)
+[README.md](../README.md) · [RUNBOOK.md](../RUNBOOK.md)
 
 </div>

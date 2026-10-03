@@ -37,6 +37,11 @@ export interface CreditStore {
     idempotencyKey: string;
     reservationId: string;
     messageId: string;
+    /** Stored on msg:{id} for early GET /v1/sms/:id before ClickHouse catches up. */
+    to?: string;
+    body?: string;
+    priority?: string;
+    acceptedAt?: string;
   }): Promise<void>;
 
   refund(input: {
@@ -51,6 +56,9 @@ export interface CreditStore {
     userId: string;
     messageId: string;
     acceptedAt: string;
+    to: string;
+    body: string;
+    priority: string;
   } | null>;
 
   /** Absolute set of Redis residual (rebuild / ops). */

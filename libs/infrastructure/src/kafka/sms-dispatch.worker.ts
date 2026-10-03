@@ -264,7 +264,6 @@ export class SmsDispatchWorker {
       'NX',
     );
     if (lock !== 'OK') return;
-    // Pre-settle only: restore Redis residual. Post-settle PG credit is ledger's job.
     const settled = await this.redis.get(`settled:${event.messageId}`);
     if (settled) return;
     await this.redis.incrby(`wallet:${event.userId}:balance`, event.cost ?? 1);

@@ -1,5 +1,9 @@
 import Redis from 'ioredis';
 import { CreditStore, WalletRepository } from '@pulsegate/domain';
+import {
+  DEMO_HEAVY_USER_ID,
+  DEMO_LIGHT_USER_ID,
+} from '../persistence/typeorm/demo-ids';
 
 export interface ReconcilerConfig {
   redisHost: string;
@@ -61,13 +65,10 @@ export class ReservationReconciler {
   }
 
   private async sweepDeadlines(): Promise<void> {
-    // Redis TIME is authority for expiry scores (ms approximation via local clock
-    // aligned with how admit wrote Date.now() deadlines).
-    const nowMs = Date.now();
     const expired = (await this.redis.zrangebyscore(
       'reservations:deadlines',
       '-inf',
-      String(nowMs),
+      String(Date.now()),
       'LIMIT',
       0,
       100,
@@ -82,10 +83,8 @@ export class ReservationReconciler {
 
       const userId = res.userId;
       const messageId = res.messageId;
-      const cost = BigInt(res.cost ?? '1');
       const idemKey = res.idemKey;
       if (!idemKey) {
-        // Legacy reservation without idemKey — cannot safely commit/refund via Lua.
         await this.redis.zrem('reservations:deadlines', reservationId);
         continue;
       }
@@ -100,33 +99,23 @@ export class ReservationReconciler {
       }
 
       if (state === 'PENDING') {
+        // No refund on TTL — ambiguous produce may already be on Kafka.
         const seen = await this.redis.get(`seen:${messageId}`);
-        if (seen) {
-          await this.credits.commit({
-            userId,
-            idempotencyKey: idemKey,
-            reservationId,
-            messageId,
-          });
-          // eslint-disable-next-line no-console
-          console.log(`reconciler commit (seen) messageId=${messageId}`);
-          continue;
-        }
-
-        const outcome = await this.credits.refund({
+        const settledFlag = await this.redis.get(`settled:${messageId}`);
+        const settledPg = await this.wallets.isMessageSettled(messageId);
+        await this.credits.commit({
           userId,
           idempotencyKey: idemKey,
           reservationId,
-          cost,
+          messageId,
         });
         // eslint-disable-next-line no-console
         console.log(
-          `reconciler refund (${outcome}) messageId=${messageId} reservation=${reservationId}`,
+          `reconciler commit (ttl-lockup) messageId=${messageId} seen=${Boolean(seen)} settled=${Boolean(settledFlag || settledPg)}`,
         );
         continue;
       }
 
-      // Unknown / missing idem — drop deadline stub.
       await this.redis.zrem('reservations:deadlines', reservationId);
       await this.redis.del(`reservation:${reservationId}`);
     }
@@ -149,18 +138,11 @@ export class ReservationReconciler {
   }
 
   private async driftCheck(): Promise<void> {
-    // Lightweight signal: sample demo users if present; skip heavy scans.
-    const demoUsers = [
-      '11111111-1111-1111-1111-111111111111',
-      '22222222-2222-2222-2222-222222222222',
-    ];
-    for (const userId of demoUsers) {
+    for (const userId of [DEMO_LIGHT_USER_ID, DEMO_HEAVY_USER_ID]) {
       const wallet = await this.wallets.findByUserId(userId);
       if (!wallet) continue;
       const residual = await this.credits.getResidual(userId);
       const leased = wallet.getLeasedOut().amount;
-      // residual should be ≤ leased_out; large positive drift on residual vs leased
-      // after settle lag is expected. Flag only extreme residual > leased + threshold.
       if (residual > leased + this.driftThreshold) {
         // eslint-disable-next-line no-console
         console.warn(

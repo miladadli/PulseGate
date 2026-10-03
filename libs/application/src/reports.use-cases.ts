@@ -21,22 +21,28 @@ export class GetSmsByIdUseCase {
     private readonly credits: CreditStore,
   ) {}
 
+  /**
+   * Prefer ClickHouse (full row). Fall back to Redis accept-cache for early reads
+   * before the projector catches up (cache now includes to/body/priority).
+   */
   async execute(messageId: string): Promise<SmsReportRow | null> {
+    const stored = await this.reports.findById(messageId);
+    if (stored) return stored;
+
     const cached = await this.credits.getMessageCache(messageId);
-    if (cached) {
-      return {
-        messageId: cached.messageId,
-        userId: cached.userId,
-        to: '',
-        body: '',
-        priority: '',
-        status: cached.status,
-        acceptedAt: cached.acceptedAt,
-        updatedAt: cached.acceptedAt,
-        deliveredAt: null,
-        latencyMs: null,
-      };
-    }
-    return this.reports.findById(messageId);
+    if (!cached) return null;
+
+    return {
+      messageId: cached.messageId,
+      userId: cached.userId,
+      to: cached.to,
+      body: cached.body,
+      priority: cached.priority,
+      status: cached.status,
+      acceptedAt: cached.acceptedAt,
+      updatedAt: cached.acceptedAt,
+      deliveredAt: null,
+      latencyMs: null,
+    };
   }
 }

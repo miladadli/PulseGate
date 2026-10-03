@@ -111,11 +111,12 @@ export class SendSmsUseCase {
       alreadyCommitted: boolean;
     },
   ) {
+    const topic = await this.classifier.classify({
+      userId: input.userId,
+      priority: input.priority,
+    });
+
     if (admit.alreadyCommitted) {
-      const topic = await this.classifier.classify({
-        userId: input.userId,
-        priority: input.priority,
-      });
       return {
         messageId: admit.messageId,
         status: 'accepted' as const,
@@ -123,10 +124,6 @@ export class SendSmsUseCase {
         replay: true,
       };
     }
-    const topic = await this.classifier.classify({
-      userId: input.userId,
-      priority: input.priority,
-    });
 
     const event: SmsAcceptedEvent = {
       messageId: admit.messageId,
@@ -161,6 +158,10 @@ export class SendSmsUseCase {
         idempotencyKey: input.idempotencyKey,
         reservationId: admit.reservationId,
         messageId: admit.messageId,
+        to: input.to,
+        body: input.body,
+        priority: input.priority,
+        acceptedAt: event.acceptedAt,
       });
       return {
         messageId: admit.messageId,
