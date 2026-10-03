@@ -184,6 +184,9 @@ flowchart LR
 | ledger | Kafka + flush حدود ۲ ثانیه |
 | reconciler | تایمر حدود ۳ ثانیه؛ TTL روی PENDING فقط **commit/lockup** |
 
+- اگر produce به Kafka **مبهم** باشد (قطعی broker / timeout): API کد ۵۰۳ می‌دهد و **refund نمی‌کند**؛ اعتبار PENDING می‌ماند تا TTL-lockup.
+- اگر circuit breaker اپراتور طولانی open بماند، retryها `maxAttempts` را می‌سوزانند و پیام **failed/DLQ** می‌شود.
+
 Kafka لوکال تک‌broker / RF=1 است؛ production باید multi-broker با RF≥3 باشد.
 
 ---

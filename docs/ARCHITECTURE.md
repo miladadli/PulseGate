@@ -308,7 +308,9 @@ How to measure: [RUNBOOK.md](../RUNBOOK.md).
 
 **Reservation TTL policy:** expired `PENDING` reservations are **committed (lockup)**, never auto-refunded. Refunding after TTL would risk free SMS if an ambiguous produce already landed on Kafka. Definitive produce failures still refund immediately on the API path.
 
-Operator **circuit breaker** (shared Redis) opens after consecutive failures → retry/DLQ with `circuit_open` (`redis-circuit-breaker.ts`).
+Operator **circuit breaker** (shared Redis) opens after consecutive failures → retry/DLQ with `circuit_open` (`redis-circuit-breaker.ts`). If the breaker stays open long enough to burn `WORKER_MAX_ATTEMPTS`, the message becomes terminal **failed** (DLQ) — recovery does not revive that in-flight id; new admits succeed after the breaker closes.
+
+**Ambiguous Kafka produce** (broker down / timeout): API returns 503 and **does not refund**; credit stays `PENDING` until reconciler TTL-lockup. Only definitive produce errors refund on the API path.
 
 Local Kafka is a **single broker / RF=1** (Compose). Production would use a multi-broker cluster with RF≥3.
 

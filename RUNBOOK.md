@@ -123,12 +123,36 @@ npm run test:k6
 |---------|-------|--------|
 | 402 | Redis residual + PG balance | Top-up; wait lease refill |
 | 429 | Rate keys `rl:{userId}:*` | Back off / raise env limits |
-| SMS stuck accepted | worker/operator logs; Redis `dispatch:done:{id}` | If value is `processing`, wait ≤2m or `DEL` key + replay; if `1` without deliver, operator may have acked—check `sms.status` / CH. Cold-start: workers retry topic create and `restart: unless-stopped` |
+| 503 `ADMIT_PAUSED` | Redis `admit:paused` | Wait for `npm run redis:rebuild` to finish (clears pause in `finally`) |
+| 503 `INGEST_AMBIGUOUS` / Kafka down | API after produce timeout | **No immediate refund** — residual stays locked (`PENDING`); reconciler TTL-commits (lockup). Prefer lockup over free SMS |
+| 503 definitive ingest fail | rare Kafka error types | API path **refunds** PENDING immediately |
+| SMS stuck accepted | worker/operator logs; Redis `dispatch:done:{id}` | If `processing`, wait ≤2m (short lock) then retry path; if `1` without deliver, check `sms.status` / CH. Workers retry topic create + `restart: unless-stopped` |
+| SMS `failed` after CB open | `cb:operator:{mode}:*` + retry/DLQ | Prolonged CB open burns `WORKER_MAX_ATTEMPTS` (default 3) → **DLQ / failed**. Clear CB + fix operator; in-flight messages may already be terminal |
 | Reports empty | projector logs / CH | `npm run projector:dev`; wait FINAL |
-| Balance not dropping in PG | ledger | `npm run ledger:dev`; check `wallet_ledger` |
+| Balance not dropping in PG | ledger | `npm run ledger:dev`; check `wallet_ledger` (`lease_settle` is idempotent on `ref_id`) |
 | Operator storms | CB open | Wait `CB_OPEN_MS`; fix operator; watch `cb:operator:*` |
 | Redis residual wrong / flush | AOF / keys | `npm run redis:rebuild` (conservative; admits paused via `admit:paused`) |
-| Pending reservations | reconciler | `npm run reconciler:dev` |
+| Pending reservations | reconciler | TTL on `PENDING` → **commit/lockup**, not auto-refund |
+
+## Verified edge behaviors (local)
+
+Exercised via `scripts/edge-batch-a.js` … `f.js` against `full` stack:
+
+| Behavior | Result |
+|----------|--------|
+| Idempotency replay / payload mismatch / missing key | 202+replay / 409 / 422 |
+| Insufficient credit / rate limit | 402 / 429 |
+| Express never routes to `sms.heavy` | always `sms.express` |
+| Normal → heavy after ~50 / 10s window | topic flips at threshold |
+| Admit paused | 503 `ADMIT_PAUSED`, then resume 202 |
+| Kafka down mid-admit | 503 ambiguous + residual −1 (lockup, no refund) |
+| Operator down | stays accepted → delivers after operator returns (retry) |
+| CB open then clear | no deliver while open; new SMS delivers after clear |
+| `dispatch:done` | `processing` during send; `1` only after operator ack |
+| TTL expired PENDING | reconciler commits (lockup); residual not restored |
+| Double `lease_settle` | second batch skipped; one PG row |
+| Conservative rebuild | residuals zeroed, pause cleared, admit works after top-up |
+| Kill one express worker / full compose restart | still delivers |
 
 ## Retention / RTO (declared)
 
@@ -176,4 +200,13 @@ npm run demo:smoke         # accept → delivered (needs workers + operator)
 npm run verify             # unit + integration + demo:smoke
 npm run test:k6            # needs https://k6.io + API up
 # VUS=10 DURATION=20s REQUIRE_CREDIT=1 npm run test:k6
+
+# Edge batches (need full stack; some are disruptive — D stops operator, F stops Kafka / may full restart)
+node scripts/edge-batch-a.js   # idempotency, 402, 429
+node scripts/edge-batch-b.js   # GET cache/deliver/404, kill worker
+node scripts/edge-batch-c.js   # Lua race, settle, TTL lockup, refund
+node scripts/edge-batch-d.js   # CB, operator down, done markers
+node scripts/edge-batch-e.js   # routing, admit paused, redis rebuild
+node scripts/edge-batch-f.js   # Kafka fail lockup, double settle, full restart
+# SKIP_FULL_RESTART=1 node scripts/edge-batch-f.js
 ```

@@ -134,10 +134,11 @@ npm run test:integration # live API (needs infra + api; ideally full stack)
 npm run demo:smoke       # top-up → send express → wait delivered
 npm run verify           # unit + integration + demo:smoke
 npm run test:k6          # admit load (needs k6 + API up; top-up first)
-# Windows-friendly overrides: set VUS=5& set DURATION=10s& set REQUIRE_CREDIT=1& npm run test:k6
+# Windows-friendly: set VUS=5& set DURATION=10s& set REQUIRE_CREDIT=1& npm run test:k6
+node scripts/edge-batch-a.js   # … through edge-batch-f.js — see RUNBOOK
 ```
 
-Ops: see [RUNBOOK.md](./RUNBOOK.md) (rate limit, circuit breaker, SLO measurement).
+Ops + verified edge matrix: [RUNBOOK.md](./RUNBOOK.md).
 
 | Service    | Port        |
 |------------|-------------|
@@ -161,6 +162,7 @@ Ops: see [RUNBOOK.md](./RUNBOOK.md) (rate limit, circuit breaker, SLO measuremen
 | Credit lease / settle / reconciler TTL lockup | Multi-broker HA Kafka |
 | Express vs normal/heavy split + CB + 429 | Real operator capacity |
 | End-to-end deliver via workers + reports in ClickHouse | Multi-region / DR drill |
-| Unit tests + optional k6 admit load (~170 req/s local) | P99 under production traffic |
+| Unit + integration + demo smoke + edge batches A–F | P99 under production traffic |
+| Local k6 admit ~175 req/s | Sustained 100M/day |
 
 Design target remains ~100M/day; scale-out is horizontal (API replicas, more worker consumers, Kafka partitions). Load proof in this repo is local Docker + k6, not a production soak.
